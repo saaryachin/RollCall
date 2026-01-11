@@ -4,6 +4,8 @@ import subprocess
 import socket
 import concurrent.futures
 import platform
+import os
+from typing import Tuple, Dict
 
 def ping_host(ip: str, ping_base_cmd: list[str], timeout: float = 2.0) -> bool:
     try:
@@ -17,16 +19,19 @@ def ping_host(ip: str, ping_base_cmd: list[str], timeout: float = 2.0) -> bool:
     except Exception:
         return False
 
-def resolve_host(ip: str) -> str:
-    """Resolve IP address to only the short hostname (not full FQDN), or return IP if no hostname found."""
-    try:
-        hostname, _, _ = socket.gethostbyaddr(ip)
-        # Extract short hostname (before first dot)
-        shortname = hostname.split('.')[0]
-        return shortname
-    except Exception:
+def resolve_host(ip: str, host_labels: dict, use_dns: bool) -> str:
+    """Resolve IP to name using local host_labels first, then DNS (optional), else IP."""
+    if ip in host_labels:
+        return host_labels[ip]
+
+    if not use_dns:
         return ip
 
+    try:
+        hostname, _, _ = socket.gethostbyaddr(ip)
+        return hostname.split('.')[0]
+    except Exception:
+        return ip
 
 def parse_networks(networks_arg: str):
     """Parse the comma-separated network CIDR strings."""
@@ -40,35 +45,100 @@ def parse_networks(networks_arg: str):
             print(f"Warning: Skipping invalid network '{net}': {e}")
     return parsed_networks
 
-def scan_network(network: ipaddress.IPv4Network, resolve: bool, ping_base_cmd: list[str]) -> list:
-    """Scan hosts in the given network, return list of reachable hosts (IP or hostnames)."""
-    reachable = []
+def find_resolve_file(disabled: bool) -> str | None:
+    """Return path to resolve file if found, else None. Checks private first."""
+    if disabled:
+        return None
+
+    for candidate in ("resolve.private.txt", "resolve.txt"):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def load_resolve_file(path: str) -> tuple[dict, dict]:
+    """
+    Parse resolve file with two sections:
+      [networks] CIDR LABEL...
+      [hosts]    IP   NAME...
+    Returns:
+      net_labels: dict[IPv4Network, str]
+      host_labels: dict[str, str]  (ip string -> name)
+    """
+    net_labels = {}
+    host_labels = {}
+
+    section = None
+    with open(path, "r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            if line.lstrip().startswith("#"):
+                continue
+
+            lower = line.lower()
+            if lower == "[networks]":
+                section = "networks"
+                continue
+            if lower == "[hosts]":
+                section = "hosts"
+                continue
+
+            if section == "networks":
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                cidr = parts[0]
+                label = " ".join(parts[1:]).strip()
+                try:
+                    net = ipaddress.ip_network(cidr, strict=False)
+                    net_labels[net] = label
+                except ValueError:
+                    continue
+
+            elif section == "hosts":
+                parts = line.split()
+                if len(parts) < 2:
+                    continue
+                ip = parts[0]
+                name = " ".join(parts[1:]).strip()
+                try:
+                    ipaddress.ip_address(ip)
+                    host_labels[ip] = name
+                except ValueError:
+                    continue
+
+            else:
+                # Ignore lines outside known sections
+                continue
+
+    return net_labels, host_labels
+
+
+def scan_network(network: ipaddress.IPv4Network, resolve: bool, ping_base_cmd: list[str], host_labels: dict) -> list:
+    """Scan hosts in the given network, return sorted list of display strings."""
+    entries = []
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
-        futures = {executor.submit(ping_host, str(host), ping_base_cmd): host for host in network.hosts()}
+        futures = {executor.submit(ping_host, str(host), ping_base_cmd): str(host) for host in network.hosts()}
+
         for future in concurrent.futures.as_completed(futures):
-            ip = str(futures[future])
+            ip = futures[future]
             if future.result():
-                if resolve:
-                    hostname = resolve_host(ip)
-                    reachable.append(hostname)
-                else:
-                    reachable.append(ip)
-    # Separate resolved hostnames and plain IPs
-    # Identify resolved hostnames as those containing alphabetic chars
-    resolved = [h for h in reachable if any(c.isalpha() for c in h)]
-    ips = [h for h in reachable if not any(c.isalpha() for c in h)]
+                display = resolve_host(ip, host_labels, resolve)
+                entries.append((display, ip))
 
-    # Sort IPs numerically
-    ips_sorted = sorted(ips, key=lambda ip: ipaddress.ip_address(ip))
+    named = [(d, ip) for (d, ip) in entries if d != ip]
+    unnamed = [(d, ip) for (d, ip) in entries if d == ip]
 
-    # Sort resolved hostnames alphabetically
-    resolved_sorted = sorted(resolved)
+    named_sorted = sorted(named, key=lambda x: x[0].lower())
+    unnamed_sorted = sorted(unnamed, key=lambda x: ipaddress.ip_address(x[1]))
 
-    return resolved_sorted + ips_sorted
+    return [d for (d, _) in named_sorted + unnamed_sorted]
 
 
-
-def print_table(networks, results, netnames):
+def print_table(networks, results, netnames, net_labels):
     """Print the results as a table with columns for each network."""
     # Find the max column height
     max_len = max(len(results[net]) for net in networks)
@@ -79,9 +149,14 @@ def print_table(networks, results, netnames):
     # Print header with network names if provided
     header_parts = []
     for idx, net in enumerate(networks):
-        title = f'{str(net.network_address)}/{net.prefixlen}'
-        if idx < len(netnames) and netnames[idx]:
-            title += ' ' + netnames[idx]
+        title = f'{net.network_address}/{net.prefixlen}'
+
+        label = net_labels.get(net, "")
+        if label:
+            title += " " + label
+        elif idx < len(netnames) and netnames[idx]:
+            title += " " + netnames[idx]
+
         header_parts.append(title.ljust(col_width))
     header = ' | '.join(header_parts)
 
@@ -106,8 +181,15 @@ def main():
     parser.add_argument('networks', type=str, help='Single or comma-separated list of CIDR networks')
     parser.add_argument('--resolve', action='store_true', help='Resolve IP addresses to hostnames')
     parser.add_argument('--netnames', type=str, default='', help='Comma-separated list of names corresponding to each network')
-
+    parser.add_argument( '--no-resolve-file', action='store_true', help='Ignore resolve.txt even if present'
+)
     args = parser.parse_args()
+
+    resolve_path = find_resolve_file(args.no_resolve_file)
+    net_labels = {}
+    host_labels = {}
+    if resolve_path:
+        net_labels, host_labels = load_resolve_file(resolve_path)
 
     system = platform.system()
 
@@ -124,12 +206,11 @@ def main():
     results = {}
     for net in networks:
         print(f'Scanning network {net.network_address}/{net.prefixlen}...')
-        results[net] = scan_network(net, args.resolve, ping_base_cmd)
-
+        results[net] = scan_network(net, args.resolve, ping_base_cmd, host_labels)
     # Parse network names if provided
     netnames = [name.strip() for name in args.netnames.split(',')] if args.netnames else []
 
-    print_table(networks, results, netnames)
+    print_table(networks, results, netnames, net_labels)
 
 
 if __name__ == '__main__':
