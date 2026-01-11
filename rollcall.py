@@ -3,22 +3,19 @@ import ipaddress
 import subprocess
 import socket
 import concurrent.futures
+import platform
 
-
-def ping_host(ip: str) -> bool:
-    """Ping the given IP address to check if it's reachable."""
+def ping_host(ip: str, ping_base_cmd: list[str], timeout: float = 2.0) -> bool:
     try:
-        # Use the system ping command. Windows uses different flag than Unix.
-        # Timeout of 1000 ms (1 sec) to not wait too long.
         output = subprocess.run(
-            ['ping', '-c', '1', '-W', '1', ip],
+            ping_base_cmd + [ip],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
+            timeout=timeout
         )
         return output.returncode == 0
     except Exception:
         return False
-
 
 def resolve_host(ip: str) -> str:
     """Resolve IP address to only the short hostname (not full FQDN), or return IP if no hostname found."""
@@ -43,12 +40,11 @@ def parse_networks(networks_arg: str):
             print(f"Warning: Skipping invalid network '{net}': {e}")
     return parsed_networks
 
-
-def scan_network(network: ipaddress.IPv4Network, resolve: bool) -> list:
+def scan_network(network: ipaddress.IPv4Network, resolve: bool, ping_base_cmd: list[str]) -> list:
     """Scan hosts in the given network, return list of reachable hosts (IP or hostnames)."""
     reachable = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
-        futures = {executor.submit(ping_host, str(host)): host for host in network.hosts()}
+        futures = {executor.submit(ping_host, str(host), ping_base_cmd): host for host in network.hosts()}
         for future in concurrent.futures.as_completed(futures):
             ip = str(futures[future])
             if future.result():
@@ -113,6 +109,13 @@ def main():
 
     args = parser.parse_args()
 
+    system = platform.system()
+
+    if system == "Windows":
+        ping_base_cmd = ["ping", "-n", "1", "-w", "1000"]
+    else:
+        ping_base_cmd = ["ping", "-c", "1", "-W", "1"]
+
     networks = parse_networks(args.networks)
     if not networks:
         print('No valid networks to scan. Exiting.')
@@ -121,7 +124,7 @@ def main():
     results = {}
     for net in networks:
         print(f'Scanning network {net.network_address}/{net.prefixlen}...')
-        results[net] = scan_network(net, args.resolve)
+        results[net] = scan_network(net, args.resolve, ping_base_cmd)
 
     # Parse network names if provided
     netnames = [name.strip() for name in args.netnames.split(',')] if args.netnames else []
