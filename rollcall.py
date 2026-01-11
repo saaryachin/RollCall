@@ -46,15 +46,14 @@ def parse_networks(networks_arg: str):
     return parsed_networks
 
 def find_resolve_file(disabled: bool) -> str | None:
-    """Return path to resolve file if found, else None. Checks private first."""
+    """Return path to resolve.txt if found, else None."""
     if disabled:
         return None
 
-    for candidate in ("resolve.private.txt", "resolve.txt"):
-        if os.path.isfile(candidate):
-            return candidate
-    return None
+    if os.path.isfile("resolve.txt"):
+        return "resolve.txt"
 
+    return None
 
 def load_resolve_file(path: str) -> tuple[dict, dict]:
     """
