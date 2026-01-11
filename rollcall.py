@@ -177,7 +177,7 @@ def print_table(networks, results, netnames, net_labels):
 
 def main():
     parser = argparse.ArgumentParser(description='Network scanner for CIDR networks.')
-    parser.add_argument('networks', type=str, help='Single or comma-separated list of CIDR networks')
+    parser.add_argument('networks', nargs='?', default=None, help='Single or comma-separated list of CIDR networks (optional if resolve.txt has [networks])')
     parser.add_argument('--resolve', action='store_true', help='Resolve IP addresses to hostnames')
     parser.add_argument('--netnames', type=str, default='', help='Comma-separated list of names corresponding to each network')
     parser.add_argument( '--no-resolve-file', action='store_true', help='Ignore resolve.txt even if present')
@@ -197,10 +197,18 @@ def main():
     else:
         ping_base_cmd = ["ping", "-c", "1", "-W", "1"]
 
-    networks = parse_networks(args.networks)
-    if not networks:
-        print('No valid networks to scan. Exiting.')
-        return
+    # Decide which networks to scan
+    if args.networks:
+        networks = parse_networks(args.networks)
+        if not networks:
+            print('No valid networks to scan. Exiting.')
+            return
+    else:
+        # No CLI networks provided: fall back to resolve.txt [networks]
+        if net_labels:
+            networks = list(net_labels.keys())
+        else:
+            parser.error("networks is required unless resolve.txt contains a [networks] section")
 
     results = {}
     for net in networks:
