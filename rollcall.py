@@ -5,7 +5,6 @@ import socket
 import concurrent.futures
 import platform
 import os
-from typing import Tuple, Dict
 
 def ping_host(ip: str, ping_base_cmd: list[str], timeout: float = 2.0) -> bool:
     try:
@@ -46,18 +45,18 @@ def parse_networks(networks_arg: str):
     return parsed_networks
 
 def find_resolve_file(disabled: bool) -> str | None:
-    """Return path to resolve.txt if found, else None."""
+    """Return path to rollcall.conf if found, else None."""
     if disabled:
         return None
 
-    if os.path.isfile("resolve.txt"):
-        return "resolve.txt"
+    if os.path.isfile("rollcall.conf"):
+        return "rollcall.conf"
 
     return None
 
 def load_resolve_file(path: str) -> tuple[dict, dict]:
     """
-    Parse resolve file with two sections:
+    Parse rollcall.conf with two sections:
       [networks] CIDR LABEL...
       [hosts]    IP   NAME...
     Returns:
@@ -114,7 +113,6 @@ def load_resolve_file(path: str) -> tuple[dict, dict]:
 
     return net_labels, host_labels
 
-
 def scan_network(network: ipaddress.IPv4Network, resolve: bool, ping_base_cmd: list[str], host_labels: dict) -> list:
     """Scan hosts in the given network, return sorted list of display strings."""
     entries = []
@@ -136,11 +134,10 @@ def scan_network(network: ipaddress.IPv4Network, resolve: bool, ping_base_cmd: l
 
     return [d for (d, _) in named_sorted + unnamed_sorted]
 
-
 def print_table(networks, results, netnames, net_labels):
     """Print the results as a table with columns for each network."""
     # Find the max column height
-    max_len = max(len(results[net]) for net in networks)
+    max_len = max((len(results[net]) for net in networks), default=0)
 
     # Define a fixed width per column (tab size) to support up to 5 networks on most screens
     col_width = 25
@@ -174,14 +171,13 @@ def print_table(networks, results, netnames, net_labels):
                 row.append(''.ljust(col_width))
         print(' | '.join(row))
 
-
 def main():
-    parser = argparse.ArgumentParser(description='Network scanner for CIDR networks.')
-    parser.add_argument('networks', nargs='?', default=None, help='Single or comma-separated list of CIDR networks (optional if resolve.txt has [networks])')
-    parser.add_argument('--resolve', action='store_true', help='Resolve IP addresses to hostnames')
-    parser.add_argument('--netnames', type=str, default='', help='Comma-separated list of names corresponding to each network')
-    parser.add_argument( '--no-resolve-file', action='store_true', help='Ignore resolve.txt even if present')
-    parser.add_argument( '-v', '--verbose', action='store_true', help='Show scan progress messages')
+    parser = argparse.ArgumentParser(description='Lightweight network roll-call: show which hosts are up across one or more networks.')
+    parser.add_argument('networks', nargs='?', default=None, help='CIDR network(s) to scan (single or comma-separated). If omitted, uses [networks] from rollcall.conf.')
+    parser.add_argument('--resolve', action='store_true', help='Also try DNS PTR resolution for hosts not found in rollcall.conf.')
+    parser.add_argument('--netnames', type=str, default='', help='Comma-separated network names (fallback if rollcall.conf has no labels).')
+    parser.add_argument('--no-resolve-file', action='store_true', help='Ignore rollcall.conf even if present.')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Show scan progress messages.')
     args = parser.parse_args()
 
     resolve_path = find_resolve_file(args.no_resolve_file)
@@ -204,11 +200,11 @@ def main():
             print('No valid networks to scan. Exiting.')
             return
     else:
-        # No CLI networks provided: fall back to resolve.txt [networks]
+        # No CLI networks provided: fall back to rollcall.conf [networks]
         if net_labels:
             networks = list(net_labels.keys())
         else:
-            parser.error("networks is required unless resolve.txt contains a [networks] section")
+            parser.error("networks is required unless rollcall.conf contains a [networks] section")
 
     results = {}
     for net in networks:
@@ -219,7 +215,6 @@ def main():
     netnames = [name.strip() for name in args.netnames.split(',')] if args.netnames else []
 
     print_table(networks, results, netnames, net_labels)
-
 
 if __name__ == '__main__':
     main()
