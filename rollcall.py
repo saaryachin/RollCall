@@ -181,8 +181,8 @@ def main():
     parser.add_argument('networks', type=str, help='Single or comma-separated list of CIDR networks')
     parser.add_argument('--resolve', action='store_true', help='Resolve IP addresses to hostnames')
     parser.add_argument('--netnames', type=str, default='', help='Comma-separated list of names corresponding to each network')
-    parser.add_argument( '--no-resolve-file', action='store_true', help='Ignore resolve.txt even if present'
-)
+    parser.add_argument( '--no-resolve-file', action='store_true', help='Ignore resolve.txt even if present')
+    parser.add_argument( '-v', '--verbose', action='store_true', help='Show scan progress messages')
     args = parser.parse_args()
 
     resolve_path = find_resolve_file(args.no_resolve_file)
@@ -205,7 +205,8 @@ def main():
 
     results = {}
     for net in networks:
-        print(f'Scanning network {net.network_address}/{net.prefixlen}...')
+        if args.verbose:
+            print(f'Scanning network {net.network_address}/{net.prefixlen}...')
         results[net] = scan_network(net, args.resolve, ping_base_cmd, host_labels)
     # Parse network names if provided
     netnames = [name.strip() for name in args.netnames.split(',')] if args.netnames else []
