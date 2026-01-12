@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import argparse
 import ipaddress
 import subprocess
@@ -5,6 +7,7 @@ import socket
 import concurrent.futures
 import platform
 import os
+from pathlib import Path
 
 def ping_host(ip: str, ping_base_cmd: list[str], timeout: float = 2.0) -> bool:
     try:
@@ -32,25 +35,42 @@ def resolve_host(ip: str, host_labels: dict, use_dns: bool) -> str:
     except Exception:
         return ip
 
-def parse_networks(networks_arg: str):
+def parse_networks(networks_arg: str) -> list[ipaddress.IPv4Network]:
     """Parse the comma-separated network CIDR strings."""
     networks = [net.strip() for net in networks_arg.split(',')]
     parsed_networks = []
     for net in networks:
         try:
-            parsed = ipaddress.ip_network(net.strip())
+            parsed = ipaddress.ip_network(net.strip(), strict=False)
             parsed_networks.append(parsed)
         except ValueError as e:
             print(f"Warning: Skipping invalid network '{net}': {e}")
     return parsed_networks
 
 def find_resolve_file(disabled: bool) -> str | None:
-    """Return path to rollcall.conf if found, else None."""
+    """Return path to rollcall.conf if found, else None.
+    Search order:
+      1) $XDG_CONFIG_HOME/rollcall/rollcall.conf (or ~/.config/rollcall/rollcall.conf)
+      2) rollcall.conf next to this script
+    """
     if disabled:
         return None
 
-    if os.path.isfile("rollcall.conf"):
-        return "rollcall.conf"
+    # 1) XDG config location
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    if xdg_config_home:
+        conf1 = Path(xdg_config_home) / "rollcall" / "rollcall.conf"
+    else:
+        conf1 = Path.home() / ".config" / "rollcall" / "rollcall.conf"
+
+    if conf1.is_file():
+        return str(conf1)
+
+    # 2) Next to the script
+    script_dir = Path(__file__).resolve().parent
+    conf2 = script_dir / "rollcall.conf"
+    if conf2.is_file():
+        return str(conf2)
 
     return None
 

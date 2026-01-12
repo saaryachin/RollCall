@@ -36,6 +36,13 @@ cd RollCall
 python3 rollcall.py
 ```
 
+Optionally, make it executable and place it on your PATH:
+
+```bash
+chmod +x rollcall.py
+cp rollcall.py ~/.local/bin/rollcall
+```
+
 ## Usage
 ### Scan networks from the command line
 
@@ -43,6 +50,9 @@ python3 rollcall.py
 python3 rollcall.py 172.16.1.0/24
 python3 rollcall.py 172.16.1.0/24,192.168.1.0/24
 ```
+
+> If installed on your PATH (e.g. in `~/.local/bin`), `rollcall` can be run without `python3`.
+
 ### Resolve hostnames via DNS (PTR), as a fallback
 
 ```bash
@@ -66,9 +76,15 @@ python3 rollcall.py
 ```bash
 python3 rollcall.py --no-resolve-file 172.16.1.0/24
 ```
+### rollcall.conf format and location
 
-### rollcall.conf format
-RollCall automatically reads `rollcall.conf` in the current directory (unless `--no-resolve-file` is used).
+RollCall automatically reads `rollcall.conf` from one of the following locations (unless `--no-resolve-file` is used):
+
+1. `$XDG_CONFIG_HOME/rollcall/rollcall.conf`
+   (typically `~/.config/rollcall/rollcall.conf`)
+2. `rollcall.conf` located in the same directory as the `rollcall` script
+
+The current working directory is not used for configuration lookup.
 
 ```ini
 [networks]
